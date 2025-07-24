@@ -10,7 +10,7 @@ RUN powershell -Command \
     New-Item -Path 'C:\inetpub\isapiapp' -ItemType Directory
 
 # Copiar tu DLL (asegúrate de tener pviewisapi.dll en el mismo directorio que el Dockerfile)
-COPY pviewisapi.dll C:\inetpub\isapiapp\pviewisapi.dll
+COPY pviewisapi.dll C:/inetpub/isapiapp/pviewisapi.dll
 
 # Configurar aplicación ISAPI (versión corregida)
 RUN powershell -Command \
