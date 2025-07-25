@@ -1,25 +1,35 @@
 FROM mcr.microsoft.com/windows/servercore/iis
 
-# Instalar características ISAPI necesarias
-RUN powershell -Command \
-    Install-WindowsFeature Web-ISAPI-Ext, Web-ISAPI-Filter; \
-    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\InetStp' -Name Enable32BitAppOnWin64 -Value 1
+# Instalar características necesarias de IIS
+RUN powershell -NoProfile -Command \
+    Install-WindowsFeature Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Metabase
 
-# Crear directorios necesarios
-RUN powershell -Command \
+# Crear carpeta donde estará la DLL
+RUN powershell -NoProfile -Command \
     New-Item -Path 'C:\inetpub\isapiapp' -ItemType Directory
 
-# Copiar tu DLL (asegúrate de tener pviewisapi.dll en el mismo directorio que el Dockerfile)
+# Copiar la DLL
 COPY pviewisapi.dll C:/inetpub/isapiapp/pviewisapi.dll
 
-# Configurar aplicación ISAPI (versión corregida)
-RUN powershell -Command \
+# Configurar permisos en la carpeta y DLL
+RUN powershell -NoProfile -Command \
+    icacls 'C:\inetpub\isapiapp' /grant 'IIS_IUSRS:(RX)' && \
+    icacls 'C:\inetpub\isapiapp\pviewisapi.dll' /grant 'IIS_IUSRS:(RX)'
+
+# Configuración de IIS
+RUN C:\Windows\System32\inetsrv\appcmd add apppool /name:"PViewPool" /managedRuntimeVersion:"" /managedPipelineMode:"Classic" && \
+    C:\Windows\System32\inetsrv\appcmd set apppool "PViewPool" /enable32BitAppOnWin64:true && \
+    C:\Windows\System32\inetsrv\appcmd add app /site.name:"Default Web Site" /path:/isapiapp /physicalPath:"C:\inetpub\isapiapp" /applicationPool:"PViewPool" && \
+    C:\Windows\System32\inetsrv\appcmd set config "Default Web Site/isapiapp" /section:handlers /+[name='PViewHandler',path='pviewisapi.dll',verb='*',modules='IsapiModule',scriptProcessor='C:\inetpub\isapiapp\pviewisapi.dll',resourceType='Unspecified',requireAccess='Execute'] && \
+    C:\Windows\System32\inetsrv\appcmd set config /section:isapiCgiRestriction /+[path='C:\inetpub\isapiapp\pviewisapi.dll',description='PView ISAPI DLL',allowed='true'] && \
+    C:\Windows\System32\inetsrv\appcmd set config "Default Web Site/isapiapp" -section:system.webServer/security/isapiCgiRestriction /notListedIsapisAllowed:"true" && \
+    C:\Windows\System32\inetsrv\appcmd set config "Default Web Site/isapiapp" /section:system.webServer/security/authentication/anonymousAuthentication /enabled:"true" /userName:"IUSR" && \
+    C:\Windows\System32\inetsrv\appcmd set config "Default Web Site/isapiapp" /section:system.webServer/directoryBrowse /enabled:"false" && \
+    C:\Windows\System32\inetsrv\appcmd set config "Default Web Site/isapiapp" /section:system.webServer/security/access /sslFlags:"None" /accessFlags:"Execute"
+
+# Configurar autenticación anónima para el pool
+RUN powershell -NoProfile -Command \
     Import-Module WebAdministration; \
-    New-WebAppPool -Name 'PViewPool'; \
-    Set-ItemProperty 'IIS:\AppPools\PViewPool' -Name enable32BitAppOnWin64 -Value $true; \
-    New-Item 'IIS:\Sites\Default Web Site\isapiapp' -physicalPath 'C:\inetpub\isapiapp' -type Application; \
-    Set-ItemProperty 'IIS:\Sites\Default Web Site\isapiapp' -Name applicationPool -Value 'PViewPool'; \
-    Add-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter 'system.webServer/security/isapiCgiRestriction' -name '.' -value @{path='C:\inetpub\isapiapp\pviewisapi.dll'; allowed='true'; description='PView ISAPI DLL'}; \
-    Add-WebConfigurationProperty -pspath 'MACHINE/WEBROOT/APPHOST' -filter 'system.webServer/handlers' -name '.' -value @{name='PViewHandler'; path='pviewisapi.dll'; verb='*'; modules='IsapiModule'; scriptProcessor='C:\inetpub\isapiapp\pviewisapi.dll'; resourceType='Unspecified'; requireAccess='Execute'}
+    Set-WebConfigurationProperty -Filter "/system.webServer/security/authentication/anonymousAuthentication" -Name userName -Value "" -PSPath "IIS:\\" -Location "Default Web Site/isapiapp"
 
 EXPOSE 80
